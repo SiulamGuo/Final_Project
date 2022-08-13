@@ -12,7 +12,8 @@ class actor(nn.Module):
                  ):
 
         super(actor, self).__init__()
-        self.fc_embed = nn.Linear(env_params['obs'] + env_params['goal'], embedding_dim)
+        # self.fc_embed = nn.Linear(env_params['obs'] + env_params['goal'], embedding_dim)
+        self.fc_embed = nn.Linear(28, embedding_dim)
         self.layer_norm = nn.LayerNorm(embedding_dim)
         self.fc_qcm = nn.Linear(embedding_dim, 3 * embedding_dim)
         self.layer_norm2 = nn.LayerNorm(embedding_dim)
@@ -30,7 +31,6 @@ class actor(nn.Module):
         attention_result = self.attention(query, context, memory)
 
         result = x1 + attention_result
-        # result = x1 + x2
         output = self.activation_fnx(result)
         response_embeddings = self.layer_norm2(output)
 
@@ -109,6 +109,26 @@ class actor(nn.Module):
 
         return observation_
 
+    def numblock_preprocess(obs,
+                            robot_dim=10,
+                            object_dim=15,
+                            goal_dim=3,
+                            ):
+        batch_size, environment_state_length = obs.size()
+        nB = (environment_state_length - robot_dim) / (object_dim + goal_dim)
+        nB = int(nB)
+
+        robot_state_flat = obs.narrow(1, 0, robot_dim)
+        flattened_objects = obs.narrow(1, robot_dim, object_dim * nB)
+        batched_objects = flattened_objects.view(batch_size, nB, object_dim)
+        flattened_goals = obs.narrow(1, robot_dim + nB * object_dim, nB * goal_dim)
+        batched_goals = flattened_goals.view(batch_size, nB, goal_dim)
+        batch_shared = robot_state_flat.unsqueeze(1).expand(-1, nB, -1)
+        batch_objgoals = torch.cat((batched_objects, batched_goals), dim=-1)
+        batched_combined_state = torch.cat((batch_shared, batch_objgoals), dim=-1)
+
+        return batched_combined_state
+
 class critic(nn.Module):
     def __init__(self, env_params):
         super(critic, self).__init__()
@@ -133,14 +153,19 @@ class Attention(nn.Module):
                  activation_fnx=F.leaky_relu,
                  ):
         super(Attention, self).__init__()
-        # self.fc_logit = nn.Linear(embedding_dim, 1)
+        self.fc_logit = nn.Linear(embedding_dim, 1)
         self.activation_fnx = activation_fnx
         self.fc_reduceheads = nn.Linear(embedding_dim, embedding_dim)
         # self.layer_norm = nn.LayerNorm(embedding_dim)
 
     def forward(self, query, context, memory):
-        # qc_logits = self.fc_logit(torch.tanh(context + query))
-        attention_heads = self.activation_fnx(memory)
+        if query.size(1) != context.size(1):
+            # query = np.tile(query, (context.size(1),1))
+            query = query.repeat(1, context.size(1), 1)
+        qc_logits = self.fc_logit(torch.tanh(context + query))
+        attention_probs = F.softmax(qc_logits, dim=1)
+        attention_heads = (memory * attention_probs).sum(1).unsqueeze(1)
+        attention_heads = self.activation_fnx(attention_heads)
         attention_result = self.fc_reduceheads(attention_heads)
 
         return attention_result
@@ -152,12 +177,18 @@ class AttentiveGraphPooling(nn.Module):
                  init_w=3e-3
                  ):
         super(AttentiveGraphPooling, self).__init__()
-        self.input_independent_query = torch.tensor(embedding_dim, requires_grad=True, dtype=torch.float32, device='cpu')
-        self.input_independent_query.data.uniform_(-init_w, init_w)
+        # self.input_independent_query = torch.tensor(embedding_dim, requires_grad=True, dtype=torch.float32, device='cpu')
+        # self.input_independent_query.data.uniform_(-init_w, init_w)
         self.attention = Attention(embedding_dim)
 
     def forward(self, response_embeddings):
-        query = self.input_independent_query
+        embedding_dim = 64
+        init_w = 3e-3
+        input_independent_query = Parameter(torch.Tensor(embedding_dim))
+        input_independent_query.data.uniform_(-init_w, init_w)
+
+        N = response_embeddings.size(0)
+        query = input_independent_query.unsqueeze(0).unsqueeze(0).expand(N, 1, -1)
         context = response_embeddings
         memory = response_embeddings
         attention_result = self.attention(query, context, memory)

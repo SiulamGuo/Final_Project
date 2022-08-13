@@ -5,10 +5,10 @@ import numpy as np
 from mpi4py import MPI
 from mpi_utils.mpi_utils import sync_networks, sync_grads
 from rl_modules.replay_buffer import replay_buffer
-from rl_modules.models import critic
+# from rl_modules.models import actor, critic
 from mpi_utils.normalizer import normalizer
 from her_modules.her import her_sampler
-from rl_modules.GNN import actor
+from rl_modules.GNN import actor, critic
 from rl_modules.logger import config_logger
 import csv
 
@@ -88,7 +88,7 @@ class ddpg_agent:
                     ep_obs, ep_ag, ep_g, ep_actions = [], [], [], []
                     # reset the environment
                     observation = self.env.reset()
-                    observation = actor._preproc_inputs_new(observation)
+                    # observation = actor._preproc_inputs_new(observation)
                     obs = observation['observation']
                     ag = observation['achieved_goal']
                     g = observation['desired_goal']
@@ -96,11 +96,12 @@ class ddpg_agent:
                     for t in range(self.env_params['max_timesteps']):
                         with torch.no_grad():
                             input_tensor = self._preproc_inputs(obs, g)
+                            input_tensor = actor.numblock_preprocess(input_tensor)
                             action = self.actor_network(input_tensor)
                             action = action.numpy().squeeze()
                         # feed the actions into the environment
                         observation_new, _, _, info = self.env.step(action)
-                        observation_new = actor._preproc_inputs_new(observation_new)
+                        # observation_new = actor._preproc_inputs_new(observation_new)
                         obs_new = observation_new['observation']
                         ag_new = observation_new['achieved_goal']
                         # append rollouts
@@ -216,12 +217,20 @@ class ddpg_agent:
         obs_norm = self.o_norm.normalize(transitions['obs'])
         g_norm = self.g_norm.normalize(transitions['g'])
         inputs_norm = np.concatenate([obs_norm, g_norm], axis=1)
+        inputs_norm_ = torch.tensor(inputs_norm, dtype=torch.float32)
+        inputs_norm_ = actor.numblock_preprocess(inputs_norm_)
+
         obs_next_norm = self.o_norm.normalize(transitions['obs_next'])
         g_next_norm = self.g_norm.normalize(transitions['g_next'])
         inputs_next_norm = np.concatenate([obs_next_norm, g_next_norm], axis=1)
+        inputs_next_norm_ = torch.tensor(inputs_next_norm, dtype=torch.float32)
+        inputs_next_norm_ = actor.numblock_preprocess(inputs_next_norm_)
+
         # transfer them into the tensor
         inputs_norm_tensor = torch.tensor(inputs_norm, dtype=torch.float32)
+        inputs_norm_tensor_ = torch.clone(inputs_norm_)
         inputs_next_norm_tensor = torch.tensor(inputs_next_norm, dtype=torch.float32)
+        inputs_next_norm_tensor_ = torch.clone(inputs_next_norm_)
         actions_tensor = torch.tensor(transitions['actions'], dtype=torch.float32)
         r_tensor = torch.tensor(transitions['r'], dtype=torch.float32)
         if self.args.cuda:
@@ -233,7 +242,8 @@ class ddpg_agent:
         with torch.no_grad():
             # do the normalization
             # concatenate the stuffs
-            actions_next = self.actor_target_network(inputs_next_norm_tensor)
+            actions_next = self.actor_target_network(inputs_next_norm_tensor_)
+            actions_next = actions_next.squeeze()
             q_next_value = self.critic_target_network(inputs_next_norm_tensor, actions_next)
             q_next_value = q_next_value.detach()
             target_q_value = r_tensor + self.args.gamma * q_next_value
@@ -245,7 +255,8 @@ class ddpg_agent:
         real_q_value = self.critic_network(inputs_norm_tensor, actions_tensor)
         critic_loss = (target_q_value - real_q_value).pow(2).mean()
         # the actor loss
-        actions_real = self.actor_network(inputs_norm_tensor)
+        actions_real = self.actor_network(inputs_norm_tensor_)
+        actions_real = actions_real.squeeze()
         actor_loss = -self.critic_network(inputs_norm_tensor, actions_real).mean()
         actor_loss += self.args.action_l2 * (actions_real / self.env_params['action_max']).pow(2).mean()
         # start to update the network
@@ -265,17 +276,18 @@ class ddpg_agent:
         for _ in range(self.args.n_test_rollouts):
             per_success_rate = []
             observation = self.env.reset()
-            observation = actor._preproc_inputs_new(observation)
+            # observation = actor._preproc_inputs_new(observation)
             obs = observation['observation']
             g = observation['desired_goal']
             for _ in range(self.env_params['max_timesteps']):
                 with torch.no_grad():
                     input_tensor = self._preproc_inputs(obs, g)
+                    input_tensor = actor.numblock_preprocess(input_tensor)
                     action = self.actor_network(input_tensor)
                     # convert the actions
                     actions = action.detach().cpu().numpy().squeeze()
                 observation_new, _, _, info = self.env.step(actions)
-                observation_new = actor._preproc_inputs_new(observation_new)
+                # observation_new = actor._preproc_inputs_new(observation_new)
                 obs = observation_new['observation']
                 g = observation_new['desired_goal']
                 per_success_rate.append(info['is_success'])
