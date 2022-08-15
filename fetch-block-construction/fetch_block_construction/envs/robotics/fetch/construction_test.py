@@ -144,14 +144,17 @@ class FetchBlockConstructionEnv(fetch_env.FetchEnv, gym_utils.EzPickle):
 
         # Append the grip
 
-        achieved_goal = np.concatenate([achieved_goal, grip_pos.copy()])
+        # achieved_goal = np.concatenate([achieved_goal, grip_pos.copy()])
 
         achieved_goal = np.squeeze(achieved_goal)
+
+        desired_goal = self.goal.copy()[0:6]
 
         return_dict = {
             'observation': obs.copy(),
             'achieved_goal': achieved_goal.copy(),
-            'desired_goal': self.goal.copy(),
+            # 'desired_goal': self.goal.copy(),
+            'desired_goal': desired_goal,
         }
         # if self.obs_type == 'dictimage':
         if hasattr(self, "render_image_obs") and self.render_image_obs:
@@ -195,8 +198,7 @@ class FetchBlockConstructionEnv(fetch_env.FetchEnv, gym_utils.EzPickle):
         return True
 
     def _sample_goal(self):
-        # cases = ["Singletower", "Pyramid", "Multitower"]
-        cases = ["Singletower"]
+        cases = ["Singletower", "Pyramid", "Multitower"]
         if self.case == "All":
             case_id = np.random.randint(0, len(cases))
             case = cases[case_id]
@@ -418,7 +420,16 @@ class FetchBlockConstructionEnv(fetch_env.FetchEnv, gym_utils.EzPickle):
         return np.concatenate(goals, axis=0).copy()
 
     def _is_success(self, achieved_goal, desired_goal):
-        subgoal_distances = self.subgoal_distances(achieved_goal[0:(np.size(achieved_goal)-3)], desired_goal[0:(np.size(desired_goal)-3)])
+        subgoal_distances = self.subgoal_distances(achieved_goal, desired_goal)
+        if np.sum([-(d > self.distance_threshold).astype(np.float32) for d in subgoal_distances]) == 0:
+            return True
+        else:
+            return False
+
+    def _is_success_new(self, achieved_goal, desired_goal):
+        achieved_goal = achieved_goal[0:6]
+        desired_goal = desired_goal[0:6]
+        subgoal_distances = self.subgoal_distances(achieved_goal, desired_goal)
         if np.sum([-(d > self.distance_threshold).astype(np.float32) for d in subgoal_distances]) == 0:
             return True
         else:
@@ -466,9 +477,10 @@ class FetchBlockConstructionEnv(fetch_env.FetchEnv, gym_utils.EzPickle):
                 }
         elif "state" in self.obs_type:
             info = {
-                'is_success': self._is_success(obs['achieved_goal'], self.goal),
+                'is_success': self._is_success(obs['achieved_goal'], self.goal[0:6]),
+                # 'is_success': self._is_success_new(obs['achieved_goal'], self.goal),
             }
-            reward = self.compute_reward(obs['achieved_goal'], self.goal, info)
+            reward = self.compute_reward(obs['achieved_goal'], self.goal[0:6], info)
         else:
             raise ("Obs_type not recognized")
         return obs, reward, done, info

@@ -26,6 +26,7 @@ class actor(nn.Module):
     def forward(self, obs_input):
         x = self.fc_embed(obs_input)
         x1 = self.layer_norm(x)
+
         x2 = self.fc_qcm(x1)
         query, context, memory = x2.chunk(3, dim=-1)
         attention_result = self.attention(query, context, memory)

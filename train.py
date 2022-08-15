@@ -26,7 +26,7 @@ def get_env_params(env):
 def launch(args):
     # create the ddpg_agent
     num_blocks = 2
-    stackonly = False
+    stackonly = True
     env_id = F"FetchBlockConstruction_{num_blocks}Blocks_IncrementalReward_DictstateObs_42Rendersize_{stackonly}Stackonly_SingletowerCase-v1",
     env_id = ''.join(env_id)
 

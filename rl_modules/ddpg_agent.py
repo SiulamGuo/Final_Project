@@ -58,7 +58,8 @@ class ddpg_agent:
             if not os.path.exists(self.args.save_dir):
                 os.mkdir(self.args.save_dir)
             # path to save the model
-            self.model_path = os.path.join(self.args.save_dir, self.args.env_name)
+            # self.model_path = os.path.join(self.args.save_dir, self.args.env_name)
+            self.model_path = self.args.save_dir
             if not os.path.exists(self.model_path):
                 os.mkdir(self.model_path)
 
@@ -138,7 +139,7 @@ class ddpg_agent:
                 self.logger.info(
                     '[{}] epoch is: {}, eval success rate is: {:.3f}'.format(datetime.now(), epoch, success_rate))
                 torch.save([self.o_norm.mean, self.o_norm.std, self.g_norm.mean, self.g_norm.std,
-                            self.actor_network.state_dict()], \
+                            self.actor_network.state_dict()],
                            self.model_path + '/model.pt')
                 writer.writerow([epoch, success_rate])
         if MPI.COMM_WORLD.Get_rank() == 0:
